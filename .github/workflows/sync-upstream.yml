@@ -13,7 +13,7 @@ env:
 on:
   # 每 12 小时检查一次上游
   schedule:
-    - cron: "17 */12 * * *"
+    - cron: "17 */6 * * *"
 
   # 支持 Actions 页面手动运行
   workflow_dispatch:
