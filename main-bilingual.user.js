@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         GitHub 中英双语界面
 // @namespace    https://github.com/xinxinenjoy/github-chinese
-// @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
+// @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改，并测试更新。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.8
+// @version      1.9.4.4-bilingual.9
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
