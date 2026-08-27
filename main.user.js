@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.1
+// @version      1.9.4.4-bilingual.6
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -100,6 +100,98 @@
                 white-space: pre-wrap;
             }
 
+            /* ======================= 中英双语辅助显示 v0.3 ======================= */
+
+            /* 默认：中文主显示，英文作为轻量辅助文字 */
+            .ghb-bilingual-label::after {
+                content: attr(data-ghb-en);
+                display: inline;
+                margin-left: 6px;
+                color: var(--fgColor-muted, #656d76);
+                font-size: 0.78em;
+                font-weight: 400;
+                line-height: inherit;
+                white-space: nowrap;
+                opacity: 0.84;
+                vertical-align: baseline;
+                pointer-events: none;
+            }
+
+            /* 顶部导航 / Tab / Portal 菜单使用紧凑布局 */
+            .ghb-layout-compact::after,
+            header.GlobalNav .ghb-bilingual-label::after,
+            .UnderlineNav .ghb-bilingual-label::after,
+            [role="tablist"] .ghb-bilingual-label::after,
+            #__primerPortalRoot__ .ghb-bilingual-label::after {
+                margin-left: 5px;
+                font-size: 0.74em;
+                opacity: 0.82;
+            }
+
+            /*
+             * v0.4：顶部和 Portal 中禁止因为父级规则变成整行 flex，
+             * 避免头像菜单图标和文本重新排序。
+             */
+            header.GlobalNav .ghb-layout-compact,
+            .UnderlineNav .ghb-layout-compact,
+            #__primerPortalRoot__ .ghb-layout-compact {
+                width: auto !important;
+                min-width: 0;
+            }
+
+            /*
+             * v0.6：Settings 左侧不再使用右对齐布局。
+             * 保留该类仅作为兼容兜底，表现等同普通紧凑文本，
+             * 防止 Turbo/React 页面切换时旧节点短暂残留 class 造成错位。
+             */
+            .ghb-layout-right {
+                position: static !important;
+                min-width: 0;
+                padding-right: 0 !important;
+            }
+
+            .ghb-layout-right::after {
+                position: static;
+                transform: none;
+                margin-left: 5px;
+                max-width: none;
+                overflow: visible;
+                text-overflow: clip;
+                text-align: left;
+                font-size: 0.74em;
+                opacity: 0.82;
+                white-space: nowrap;
+                pointer-events: none;
+            }
+
+            /* 普通菜单中的英文继续弱化 */
+            [role="menu"] .ghb-bilingual-label::after,
+            [role="navigation"] .ghb-bilingual-label::after,
+            nav .ghb-bilingual-label::after,
+            .ActionList .ghb-bilingual-label::after {
+                color: var(--fgColor-muted, #656d76);
+            }
+
+            /*
+             * 长英文不直接显示在页面里。
+             * JS 会把英文原文放到原生 title 中，避免撑坏 GitHub 布局。
+             */
+            .ghb-tooltip-only::after {
+                content: none !important;
+            }
+
+            /* 不允许在正文、代码和用户输入区域生成双语伪元素 */
+            .markdown-body .ghb-bilingual-label::after,
+            .comment-body .ghb-bilingual-label::after,
+            .js-comment-body .ghb-bilingual-label::after,
+            article .ghb-bilingual-label::after,
+            pre .ghb-bilingual-label::after,
+            code .ghb-bilingual-label::after,
+            textarea .ghb-bilingual-label::after,
+            [contenteditable="true"] .ghb-bilingual-label::after {
+                content: none !important;
+            }
+
             /* 暗色主题适配 - 使用 prefers-color-scheme */
             @media (prefers-color-scheme: dark) {
                 :root {
@@ -135,6 +227,7 @@
         mutationObserver: null,
         urlChangeHandler: null,
         dynamicMenus: {},
+        displayModeMenus: [],
         initDone: false,
     };
 
@@ -169,14 +262,354 @@
     /* =========================== 初始化入口 =========================== */
     function init() {
         checkI18NLoaded();
+        injectStyles();
+        updateBilingualPageContext();
+        setupDisplayModeMenus();
+
+        // 原始英文模式不启动任何汉化逻辑。
+        // 通过刷新页面恢复 GitHub 自身提供的英文 UI。
+        if (State.displayMode === 'english') {
+            State.initDone = true;
+            return;
+        }
+
         setupReactGlobalNavTranslation();
         initLangEnv();
-        injectStyles();
         setupMenuCommands();
         setupInitTrans();
         setupUrlChangeListener();
         setupTurboEvents();
         State.initDone = true;
+    }
+
+    /* =========================== 双语显示核心 =========================== */
+
+    const BILINGUAL_UI_SELECTOR = [
+        'header.GlobalNav',
+        'nav',
+        'aside',
+        '[role="navigation"]',
+        '[role="menu"]',
+        '[role="menuitem"]',
+        '[role="menubar"]',
+        '[role="tab"]',
+        '[role="tablist"]',
+        '[role="listbox"]',
+        '[role="option"]',
+        '[role="button"]',
+        '.UnderlineNav',
+        '.SideNav',
+        '.ActionList',
+        '.ActionListItem',
+        '.SelectMenu',
+        '.SelectMenu-item',
+        '[data-component="ActionList"]',
+        '[data-component="ActionList.Item"]'
+    ].join(', ');
+
+    const BILINGUAL_EXCLUDE_SELECTOR = [
+        'article',
+        '.markdown-body',
+        '.comment-body',
+        '.js-comment-body',
+        '[data-testid*="comment"]',
+        '[data-testid*="issue-body"]',
+        '[data-testid*="markdown"]',
+        '[data-testid*="readme"]',
+        '.blob-wrapper',
+        '.react-code-text',
+        'pre',
+        'code',
+        'kbd',
+        'textarea',
+        'input',
+        '[contenteditable="true"]'
+    ].join(', ');
+
+    const BILINGUAL_INLINE_MAX_LENGTH = 30;
+
+    /**
+     * 规范化英文原文，仅用于双语辅助标签。
+     */
+    function normalizeBilingualSource(text) {
+        return String(text || '')
+            .replace(/\xa0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /**
+     * 识别当前页面上下文。
+     * 个人 Settings 与仓库 Settings 都统一打上 ghb-page-settings。
+     */
+    function updateBilingualPageContext() {
+        const path = window.location.pathname;
+
+        const isUserSettings = /^\/settings(?:\/|$)/.test(path);
+        const isRepoSettings = /^\/[^/]+\/[^/]+\/settings(?:\/|$)/.test(path);
+
+        document.documentElement.classList.toggle(
+            'ghb-page-settings',
+            isUserSettings || isRepoSettings
+        );
+
+        document.documentElement.classList.toggle(
+            'ghb-page-repository',
+            /^\/[^/]+\/[^/]+(?:\/|$)/.test(path)
+        );
+    }
+
+    /**
+     * 把“文本节点父元素”提升到真正适合承载英文辅助文字的 UI 元素。
+     * 这样侧栏链接可以把英文推到最右边，而不是紧跟中文文本。
+     */
+    function getBilingualCarrier(element) {
+        if (!element) return null;
+
+        /*
+         * 顶部导航、仓库 Tab、Portal 弹层菜单不要提升到整条 <a>。
+         * GitHub 这些区域通常由多层 flex / span 组成，
+         * 把 ::after 挂在外层链接上容易被裁剪或打乱图标顺序。
+         * 因此优先使用当前文本节点的直接父元素。
+         */
+        if (element.closest?.(
+            'header.GlobalNav, .UnderlineNav, [role="tablist"], #__primerPortalRoot__'
+        )) {
+            return element;
+        }
+
+        /*
+         * Settings 左侧菜单保持 GitHub 原生 DOM 结构。
+         * 不再提升到整条 <a> / menuitem，否则图标、文字、箭头容易错位。
+         * 英文直接跟随中文文本的父元素，以紧凑形式显示。
+         */
+        if (
+            document.documentElement.classList.contains('ghb-page-settings')
+            && element.closest?.('nav, aside, [role="navigation"], .SideNav, .ActionList')
+            && !element.closest?.('header.GlobalNav, .UnderlineNav')
+        ) {
+            return element;
+        }
+
+        /*
+         * 普通菜单保持紧凑显示，不再强制整行 flex。
+         */
+        if (element.closest?.('[role="menu"], .SelectMenu')) {
+            return element;
+        }
+
+        return element.closest?.(
+            [
+                '[role="tab"]',
+                'button',
+                'summary',
+                'label',
+                'legend',
+                'h1',
+                'h2',
+                'h3',
+                'h4'
+            ].join(', ')
+        ) || element;
+    }
+
+    /**
+     * 判断节点是否属于 GitHub 自己提供的固定系统 UI。
+     */
+    function isBilingualUiElement(element, source = '') {
+        if (!element || State.displayMode !== 'bilingual') return false;
+
+        const normalized = normalizeBilingualSource(source);
+        if (!normalized || !/[A-Za-z]/.test(normalized)) return false;
+
+        if (element.closest?.(BILINGUAL_EXCLUDE_SELECTOR)) return false;
+
+        // GitHub 导航、菜单、Tab、ActionList 等固定 UI。
+        if (element.closest?.(BILINGUAL_UI_SELECTOR)) return true;
+
+        // Settings 页的标题、按钮、标签、链接属于系统 UI。
+        if (document.documentElement.classList.contains('ghb-page-settings')) {
+            const settingsControl = element.closest?.(
+                'a, button, summary, label, legend, h1, h2, h3, h4, [role="button"]'
+            );
+            if (settingsControl) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断应该使用哪一种英文布局。
+     */
+    function getBilingualLayout(element) {
+        if (!element) return 'inline';
+
+        // GitHub 顶部 GlobalNav / 仓库 Tab：始终紧凑显示。
+        if (element.closest?.(
+            'header.GlobalNav, .UnderlineNav, [role="tablist"], [role="tab"]'
+        )) {
+            return 'compact';
+        }
+
+        // 头像菜单、+ 菜单、搜索等 React Portal：紧凑显示，避免 flex 打乱图标顺序。
+        if (element.closest?.('#__primerPortalRoot__')) {
+            return 'compact';
+        }
+
+        /*
+         * Settings 左侧导航统一使用紧凑布局：
+         * 图标 + 中文 + English。
+         * 不再尝试右对齐，优先保证 GitHub 原生图标与箭头布局稳定。
+         */
+        if (
+            document.documentElement.classList.contains('ghb-page-settings')
+            && element.closest?.(
+                'nav, aside, [role="navigation"], .SideNav, .ActionList'
+            )
+            && !element.closest?.(
+                'header.GlobalNav, .UnderlineNav, main, [role="main"]'
+            )
+        ) {
+            return 'compact';
+        }
+
+        // 普通弹出菜单保持中文 + English 紧凑形式。
+        if (element.closest?.('[role="menu"], .SelectMenu')) {
+            return 'compact';
+        }
+
+        return 'inline';
+    }
+
+    /**
+     * 清理我们自己添加的布局类和数据。
+     */
+    function clearBilingualLabel(element) {
+        if (!element) return;
+
+        element.removeAttribute('data-ghb-en');
+        element.removeAttribute('data-ghb-en-tooltip');
+
+        element.classList.remove(
+            'ghb-bilingual-label',
+            'ghb-layout-inline',
+            'ghb-layout-compact',
+            'ghb-layout-right',
+            'ghb-tooltip-only'
+        );
+
+        if (
+            element.getAttribute('data-ghb-title-owned') === '1'
+            && element.getAttribute('title') === element.getAttribute('data-ghb-owned-title')
+        ) {
+            element.removeAttribute('title');
+        }
+
+        element.removeAttribute('data-ghb-title-owned');
+        element.removeAttribute('data-ghb-owned-title');
+    }
+
+    /**
+     * 给可见中文标签附加英文原词。
+     *
+     * 短英文：作为灰色辅助文字直接显示。
+     * 长英文：不撑布局，仅在元素没有 title 时写入原生悬停提示。
+     */
+    function markBilingualLabel(element, source) {
+        if (!element) return;
+
+        const normalized = normalizeBilingualSource(source);
+        const carrier = getBilingualCarrier(element);
+
+        if (!carrier || !isBilingualUiElement(carrier, normalized)) {
+            clearBilingualLabel(carrier || element);
+            return;
+        }
+
+        // 同一 UI 载体出现多个不同英文片段时不强行覆盖。
+        const oldSource = carrier.getAttribute('data-ghb-en');
+        if (oldSource && oldSource !== normalized) return;
+
+        clearBilingualLabel(carrier);
+
+        carrier.setAttribute('data-ghb-en', normalized);
+        carrier.classList.add('ghb-bilingual-label');
+
+        if (normalized.length > BILINGUAL_INLINE_MAX_LENGTH) {
+            carrier.classList.add('ghb-tooltip-only');
+            carrier.setAttribute('data-ghb-en-tooltip', normalized);
+
+            // 不覆盖 GitHub 自己已有的 title。
+            if (!carrier.hasAttribute('title')) {
+                carrier.setAttribute('title', normalized);
+                carrier.setAttribute('data-ghb-title-owned', '1');
+                carrier.setAttribute('data-ghb-owned-title', normalized);
+            }
+
+            return;
+        }
+
+        const layout = getBilingualLayout(carrier);
+        carrier.classList.add(`ghb-layout-${layout}`);
+    }
+
+    /**
+     * 专门处理可见文本节点。
+     * 原项目的 transText() 继续负责词库匹配，
+     * 这里只负责把命中的英文原文保留下来作为辅助标签。
+     */
+    function transVisibleTextNode(node) {
+        const text = node?.data;
+        if (!text) return;
+
+        const trimmedText = text.trim();
+        const source = normalizeBilingualSource(trimmedText);
+        const result = transText(text);
+
+        if (!result) return;
+
+        node.data = result;
+
+        if (State.displayMode === 'bilingual') {
+            markBilingualLabel(node.parentElement, source);
+        }
+    }
+
+    /**
+     * 三种显示模式菜单。
+     * 切换后刷新页面，避免在 React 页面上做反向恢复 DOM。
+     */
+    function setupDisplayModeMenus() {
+        State.displayModeMenus.forEach(id => {
+            try {
+                GM_unregisterMenuCommand(id);
+            } catch (_) {
+                // 某些脚本管理器对已失效菜单 ID 会抛异常，忽略即可。
+            }
+        });
+        State.displayModeMenus = [];
+
+        const modes = [
+            ['bilingual', '中英对照'],
+            ['chinese', '仅中文'],
+            ['english', '原始英文'],
+        ];
+
+        modes.forEach(([mode, label]) => {
+            const prefix = State.displayMode === mode ? '✓ ' : '○ ';
+            const id = GM_registerMenuCommand(
+                `${prefix}显示模式：${label}`,
+                () => {
+                    if (State.displayMode === mode) return;
+
+                    GM_setValue('displayMode', mode);
+                    GM_notification(`GitHub 显示模式已切换为：${label}`);
+                    window.location.reload();
+                }
+            );
+
+            State.displayModeMenus.push(id);
+        });
     }
 
     /**
@@ -260,6 +693,7 @@
         if (currentURL === State.currentURL) return;
 
         State.currentURL = currentURL;
+        updateBilingualPageContext();
         updatePageConfig("URL变化 (onurlchange)");
 
         // 重新设置观察器
@@ -289,6 +723,8 @@
      * 在新页面加载后执行必要的翻译
      */
     function handleTurboLoad() {
+        updateBilingualPageContext();
+
         if (!State.pageConfig) return;
 
         transTitle(); // 翻译页面标题
@@ -493,6 +929,7 @@
     function setupReactGlobalNavTranslation() {
         // ----- 环境检查 -----
         if (typeof document === 'undefined' || typeof window === 'undefined') return;
+        if (State.displayMode === 'english') return;
 
         // ----- 词库（从 I18N 读取）-----
         const labels = I18N.conf.reactGlobalNavLabels || {};
@@ -634,9 +1071,15 @@
          * 翻译单个元素的文本内容（直接修改 textContent）
          */
         function translateReactGlobalNavElement(element, source) {
-            const label = translateReactGlobalNavText(source ?? element.textContent);
+            const originalSource = normalizeReactGlobalNavText(source ?? element.textContent);
+            const label = translateReactGlobalNavText(originalSource);
+
             if (label && element.textContent !== label) {
                 element.textContent = label;
+            }
+
+            if (label && State.displayMode === 'bilingual') {
+                markBilingualLabel(element, originalSource);
             }
         }
 
@@ -669,10 +1112,16 @@
          * 翻译文本节点
          */
         function translateReactGlobalNavTextNode(node) {
-            const label = translateReactGlobalNavText(node.data);
+            const source = normalizeReactGlobalNavText(node.data);
+            const label = translateReactGlobalNavText(source);
+
             if (label) {
                 // 替换原有文本（保留前后空白）
                 node.data = node.data.replace(node.data.trim(), label);
+
+                if (State.displayMode === 'bilingual') {
+                    markBilingualLabel(node.parentElement, source);
+                }
             }
         }
 
@@ -816,16 +1265,34 @@
             if (!dialog) return;
             const header = document.getElementById('search-suggestions-dialog-header');
             if (header) {
-                const label = translateReactGlobalNavText(header.textContent);
-                if (label) header.textContent = label;
+                const source = normalizeReactGlobalNavText(header.textContent);
+                const label = translateReactGlobalNavText(source);
+                if (label) {
+                    header.textContent = label;
+                    if (State.displayMode === 'bilingual') {
+                        markBilingualLabel(header, source);
+                    }
+                }
             }
             dialog.querySelectorAll('.ActionList-sectionDivider-title').forEach(el => {
-                const label = translateReactGlobalNavText(el.textContent);
-                if (label) el.textContent = label;
+                const source = normalizeReactGlobalNavText(el.textContent);
+                const label = translateReactGlobalNavText(source);
+                if (label) {
+                    el.textContent = label;
+                    if (State.displayMode === 'bilingual') {
+                        markBilingualLabel(el, source);
+                    }
+                }
             });
             dialog.querySelectorAll('.search-feedback-prompt a, .search-feedback-prompt button').forEach(el => {
-                const label = translateReactGlobalNavText(el.textContent);
-                if (label) el.textContent = label;
+                const source = normalizeReactGlobalNavText(el.textContent);
+                const label = translateReactGlobalNavText(source);
+                if (label) {
+                    el.textContent = label;
+                    if (State.displayMode === 'bilingual') {
+                        markBilingualLabel(el, source);
+                    }
+                }
             });
         }
 
@@ -949,6 +1416,7 @@
                 if (!State.urlChangeHandler && currentURL !== previousURL) {
                     previousURL = currentURL;
                     State.currentURL = currentURL;
+                    updateBilingualPageContext();
                     updatePageConfig("URL变化 (MutationObserver)");
                 }
 
@@ -1079,7 +1547,7 @@
      */
     function handleTextNode(node) {
         if (node.length > 500) return; // 跳过长文本节点
-        transElementAttrs(node, 'data'); // 翻译文本内容
+        transVisibleTextNode(node); // 翻译文本内容，并在系统 UI 中保留英文原词
     }
 
     /**
@@ -1208,7 +1676,12 @@
         State.pageConfig.transSelectors?.forEach(([selector, result]) => {
             const element = document.querySelector(selector);
             if (element) {
+                const source = normalizeBilingualSource(element.textContent);
                 element.textContent = result; // 应用翻译
+
+                if (State.displayMode === 'bilingual') {
+                    markBilingualLabel(element, source);
+                }
             }
         });
     }
@@ -1219,6 +1692,9 @@
      * @returns {string|boolean} 翻译后的文本或 false
      */
     function transText(text) {
+        // 原始英文模式不执行任何词库翻译
+        if (State.displayMode === 'english') return false;
+
         // 跳过不需要翻译的文本：
         // 1. 空文本（包空白字符）或纯数字
         // 2. 纯中文字符
