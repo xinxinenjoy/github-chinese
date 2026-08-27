@@ -1,0 +1,167 @@
+name: Sync Upstream to Bilingual
+
+# ============================================================
+# 可复用配置区
+# ============================================================
+env:
+  UPSTREAM_REPO: maboloshi/github-chinese
+  UPSTREAM_BRANCH: gh-pages
+
+  MIRROR_BRANCH: gh-pages
+  BILINGUAL_BRANCH: bilingual
+
+on:
+  # 每 12 小时检查一次上游
+  schedule:
+    - cron: "17 */12 * * *"
+
+  # 支持 Actions 页面手动运行
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-bilingual
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout bilingual branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BILINGUAL_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream \
+            "https://github.com/${UPSTREAM_REPO}.git"
+
+      - name: Fetch origin and upstream
+        run: |
+          git fetch origin \
+            "${MIRROR_BRANCH}" \
+            "${BILINGUAL_BRANCH}"
+
+          git fetch upstream \
+            "${UPSTREAM_BRANCH}"
+
+      - name: Record versions
+        id: versions
+        run: |
+          OLD_COMMIT="$(git rev-parse origin/${MIRROR_BRANCH})"
+          NEW_COMMIT="$(git rev-parse upstream/${UPSTREAM_BRANCH})"
+
+          echo "old=${OLD_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "new=${NEW_COMMIT}" >> "$GITHUB_OUTPUT"
+
+          echo "当前镜像版本：${OLD_COMMIT}"
+          echo "上游最新版本：${NEW_COMMIT}"
+
+          if [ "${OLD_COMMIT}" = "${NEW_COMMIT}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "上游暂无更新。"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "发现上游更新。"
+          fi
+
+      - name: Protect mirror branch
+        if: steps.versions.outputs.changed == 'true'
+        run: |
+          # gh-pages 应该只作为 upstream/gh-pages 的镜像。
+          # 如果 origin/gh-pages 含有 upstream 中不存在的自定义提交，
+          # 停止自动同步，避免覆盖用户修改。
+          if ! git merge-base --is-ancestor \
+            "origin/${MIRROR_BRANCH}" \
+            "upstream/${UPSTREAM_BRANCH}"; then
+
+            echo "::error::${MIRROR_BRANCH} 已偏离上游，自动同步已停止。"
+            echo "请手动检查 origin/${MIRROR_BRANCH} 与 upstream/${UPSTREAM_BRANCH}。"
+            exit 1
+          fi
+
+      - name: Check important upstream changes
+        if: steps.versions.outputs.changed == 'true'
+        run: |
+          OLD="${{ steps.versions.outputs.old }}"
+          NEW="${{ steps.versions.outputs.new }}"
+
+          echo "## Upstream 更新检查" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if git diff --quiet "$OLD" "$NEW" -- main.user.js; then
+            echo "✅ main.user.js：无变化" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ **main.user.js：上游有变化**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "需要检查这些变化是否应同步适配到 \`main-bilingual.user.js\`。" \
+              >> "$GITHUB_STEP_SUMMARY"
+
+            echo "::warning::上游 main.user.js 已发生变化，请检查 main-bilingual.user.js 兼容性。"
+          fi
+
+          if git diff --quiet "$OLD" "$NEW" -- locals.js; then
+            echo "✅ locals.js：无变化" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "📚 locals.js：词库有更新，将自动同步。" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Update gh-pages mirror
+        if: steps.versions.outputs.changed == 'true'
+        run: |
+          git switch -C \
+            "${MIRROR_BRANCH}" \
+            "origin/${MIRROR_BRANCH}"
+
+          git merge \
+            --ff-only \
+            "upstream/${UPSTREAM_BRANCH}"
+
+          git push \
+            origin \
+            "${MIRROR_BRANCH}"
+
+          echo "gh-pages 已同步到最新 upstream。"
+
+      - name: Merge upstream into bilingual
+        if: steps.versions.outputs.changed == 'true'
+        run: |
+          git switch -C \
+            "${BILINGUAL_BRANCH}" \
+            "origin/${BILINGUAL_BRANCH}"
+
+          # 使用普通 merge。
+          # main-bilingual.user.js 是我们自己的独立文件，
+          # 正常情况下不会被上游覆盖。
+          if ! git merge \
+            --no-edit \
+            "origin/${MIRROR_BRANCH}"; then
+
+            echo "::error::合并到 bilingual 时发生冲突。"
+            echo "没有推送任何冲突结果，请手动处理。"
+            exit 1
+          fi
+
+          git push \
+            origin \
+            "${BILINGUAL_BRANCH}"
+
+          echo "bilingual 已合并最新上游代码。"
+
+      - name: No upstream changes
+        if: steps.versions.outputs.changed != 'true'
+        run: |
+          echo "当前已经与 upstream/${UPSTREAM_BRANCH} 保持同步。"
