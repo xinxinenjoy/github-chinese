@@ -280,10 +280,21 @@ function runMergeFile(currentBody, baseBody, upstreamBody) {
 }
 
 function assertNoConflictMarkers(text) {
-    for (const marker of ['<<<<<<<', '=======', '>>>>>>>']) {
-        if (text.includes(marker)) {
-            die(`生成文件仍包含 Git 冲突标记：${marker}`);
-        }
+    /*
+     * 只识别真正的 Git 冲突标记：
+     *   <<<<<<< ours
+     *   =======
+     *   >>>>>>> theirs
+     *
+     * 原脚本可能本来就包含 ======== 之类的分隔线，
+     * 不能仅凭字符串出现就判定为冲突。
+     */
+    const conflictPattern = /^(<<<<<<<(?:\s|$)|=======(?:\s*$)|>>>>>>>(?:\s|$))/m;
+
+    const match = text.match(conflictPattern);
+
+    if (match) {
+        die(`生成文件仍包含 Git 冲突标记：${match[1].trim()}`);
     }
 }
 
