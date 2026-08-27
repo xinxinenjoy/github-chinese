@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.7
+// @version      1.9.4.4-bilingual.8
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -22,7 +22,10 @@
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_notification
 // @connect      fanyi.iflyrec.com
+// @homepageURL  https://github.com/xinxinenjoy/github-chinese
 // @supportURL   https://github.com/xinxinenjoy/github-chinese/issues
+// @updateURL    https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
+// @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ==/UserScript==
 
 (function (window, document, undefined) {
@@ -223,13 +226,13 @@
             enable_missedTerms: GM_getValue("enable_missedTerms", false),
             enable_onurlchange: false,
         },
-
+    
         // 双语显示模式
         // bilingual = 中文 + English
         // chinese   = 仅中文
         // english   = 原始英文
         displayMode: GM_getValue("displayMode", "bilingual"),
-
+    
         // 当前运行时状态
         pageConfig: null,
         currentURL: window.location.href,
