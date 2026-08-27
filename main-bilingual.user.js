@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         GitHub 中英双语界面
 // @namespace    https://github.com/xinxinenjoy/github-chinese
-// @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改，并测试更新。
+// @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.9
+// @version      1.9.4.4-bilingual.10
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.10
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
@@ -22,8 +22,8 @@
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_notification
 // @connect      fanyi.iflyrec.com
-// @homepageURL  https://github.com/xinxinenjoy/github-chinese
 // @supportURL   https://github.com/xinxinenjoy/github-chinese/issues
+// @homepageURL  https://github.com/xinxinenjoy/github-chinese
 // @updateURL    https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ==/UserScript==
