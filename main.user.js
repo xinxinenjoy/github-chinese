@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.6
+// @version      1.9.4.4-bilingual.7
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -173,6 +173,16 @@
             }
 
             /*
+             * 带背景的按钮 / 徽章 / 提示条：
+             * 英文继承 GitHub 当前文字颜色，不使用 muted 灰色，
+             * 保证绿色按钮、黄色提示条、选中 Tab 等场景有足够对比度。
+             */
+            .ghb-surface-contrast::after {
+                color: inherit !important;
+                opacity: 0.90 !important;
+            }
+
+            /*
              * 长英文不直接显示在页面里。
              * JS 会把英文原文放到原生 title 中，避免撑坏 GitHub 布局。
              */
@@ -213,13 +223,13 @@
             enable_missedTerms: GM_getValue("enable_missedTerms", false),
             enable_onurlchange: false,
         },
-    
+
         // 双语显示模式
         // bilingual = 中文 + English
         // chinese   = 仅中文
         // english   = 原始英文
         displayMode: GM_getValue("displayMode", "bilingual"),
-    
+
         // 当前运行时状态
         pageConfig: null,
         currentURL: window.location.href,
@@ -347,6 +357,8 @@
 
         const isUserSettings = /^\/settings(?:\/|$)/.test(path);
         const isRepoSettings = /^\/[^/]+\/[^/]+\/settings(?:\/|$)/.test(path);
+        const isRepository = /^\/[^/]+\/[^/]+(?:\/|$)/.test(path);
+        const isRepositoryHome = /^\/[^/]+\/[^/]+\/?$/.test(path);
 
         document.documentElement.classList.toggle(
             'ghb-page-settings',
@@ -355,7 +367,12 @@
 
         document.documentElement.classList.toggle(
             'ghb-page-repository',
-            /^\/[^/]+\/[^/]+(?:\/|$)/.test(path)
+            isRepository
+        );
+
+        document.documentElement.classList.toggle(
+            'ghb-page-repository-home',
+            isRepositoryHome
         );
     }
 
@@ -392,6 +409,20 @@
         }
 
         /*
+         * 仓库主页白名单系统 UI：
+         * 按钮 / 标题 / 状态标签提升到自身可视载体，
+         * 以便背景颜色和英文辅助文字保持一致。
+         */
+        if (
+            document.documentElement.classList.contains('ghb-page-repository-home')
+            && isRepositoryHomeSystemUi(element, element.textContent)
+        ) {
+            return element.closest?.(
+                'button, [role="button"], a, summary, h2, h3, h4, strong'
+            ) || element;
+        }
+
+        /*
          * 普通菜单保持紧凑显示，不再强制整行 flex。
          */
         if (element.closest?.('[role="menu"], .SelectMenu')) {
@@ -413,6 +444,93 @@
         ) || element;
     }
 
+    /*
+     * 仓库主页中的固定 GitHub UI。
+     * 只对白名单中的系统术语 / 系统状态句启用双语，
+     * 避免扩散到文件名、提交信息、README 和用户内容。
+     */
+    const REPOSITORY_HOME_UI_PATTERNS = [
+        /^Public$/i,
+        /^Private$/i,
+        /^Internal$/i,
+        /^forked from\b/i,
+        /^Pin$/i,
+        /^Unpin$/i,
+        /^Watch$/i,
+        /^Unwatch$/i,
+        /^Fork$/i,
+        /^Star$/i,
+        /^Unstar$/i,
+        /^Compare & pull request$/i,
+        /^Go to file$/i,
+        /^Add file$/i,
+        /^Code$/i,
+        /^Contribute$/i,
+        /^Sync fork$/i,
+        /^About$/i,
+        /^Readme$/i,
+        /^License$/i,
+        /^Activity$/i,
+        /^Releases$/i,
+        /^Packages$/i,
+        /^Contributors$/i,
+        /^Languages$/i,
+        /^Suggested workflows$/i,
+        /^No releases published$/i,
+        /^Create a new release$/i,
+        /^No packages published$/i,
+        /^Publish your first package$/i,
+        /^No contributors$/i,
+        /^Based on your tech stack$/i,
+        /^\d+\s+Branches?$/i,
+        /^\d+\s+Tags?$/i,
+        /^\d+\s+Commits?$/i,
+        /^\d+\s+stars?$/i,
+        /^\d+\s+watching$/i,
+        /^\d+\s+forks?$/i,
+        /^This branch is up to date with\b/i,
+        /^This branch is \d+ commits? (?:ahead of|behind)\b/i,
+        /^This branch is even with\b/i,
+        /^.+\s+had recent pushes\b/i,
+        /^.+\s+had recent push\b/i,
+    ];
+
+    function isRepositoryHomeSystemUi(element, source) {
+        if (!document.documentElement.classList.contains('ghb-page-repository-home')) {
+            return false;
+        }
+
+        const normalized = normalizeBilingualSource(source);
+        if (!normalized) return false;
+
+        return REPOSITORY_HOME_UI_PATTERNS.some(pattern => pattern.test(normalized));
+    }
+
+    /**
+     * 带背景或按钮型 UI 需要高对比英文。
+     * 此类英文继承 GitHub 自己的文字颜色。
+     */
+    function isBilingualContrastSurface(element) {
+        if (!element) return false;
+
+        return !!element.closest?.(
+            [
+                'button',
+                '[role="button"]',
+                '.btn',
+                '.Button',
+                '[class*="Button"]',
+                '.Label',
+                '.Counter',
+                '.flash',
+                '[class*="flash"]',
+                '[data-variant]',
+                '[data-color-mode]',
+                '[aria-current="page"]'
+            ].join(', ')
+        );
+    }
+
     /**
      * 判断节点是否属于 GitHub 自己提供的固定系统 UI。
      */
@@ -426,6 +544,9 @@
 
         // GitHub 导航、菜单、Tab、ActionList 等固定 UI。
         if (element.closest?.(BILINGUAL_UI_SELECTOR)) return true;
+
+        // 仓库主页固定系统 UI 使用白名单补充覆盖。
+        if (isRepositoryHomeSystemUi(element, normalized)) return true;
 
         // Settings 页的标题、按钮、标签、链接属于系统 UI。
         if (document.documentElement.classList.contains('ghb-page-settings')) {
@@ -495,7 +616,8 @@
             'ghb-layout-inline',
             'ghb-layout-compact',
             'ghb-layout-right',
-            'ghb-tooltip-only'
+            'ghb-tooltip-only',
+            'ghb-surface-contrast'
         );
 
         if (
@@ -551,6 +673,10 @@
 
         const layout = getBilingualLayout(carrier);
         carrier.classList.add(`ghb-layout-${layout}`);
+
+        if (isBilingualContrastSurface(carrier)) {
+            carrier.classList.add('ghb-surface-contrast');
+        }
     }
 
     /**
