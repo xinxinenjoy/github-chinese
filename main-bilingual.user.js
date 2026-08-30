@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.10
+// @version      1.9.4.4-bilingual.11
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.10
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.11
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
