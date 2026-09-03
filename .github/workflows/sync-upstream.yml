@@ -16,7 +16,7 @@ on:
     # 平日轻量兜底检查：
     # UTC 01:37 = 北京时间 09:37
     # 只比较远程 SHA；无变化时不会 checkout / rebuild。
-    - cron: "37 1 * * *"
+    - cron: "37 1,13 * * *"
 
   workflow_dispatch:
     inputs:
