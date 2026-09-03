@@ -16,6 +16,11 @@
  *   upstream = 最新上游 main.user.js
  *
  * 元数据块不参与三方合并，而是从最新 upstream 自动重建。
+ *
+ * 版本策略：
+ *   1. 上游代码始终按最新 Git 提交跟随，包括正常 commit 中的主动回退。
+ *   2. 双语脚本自身的 @version 始终单调递增，避免油猴因版本号降低而拒绝更新。
+ *   3. 如果上游核心版本降低，双语版暂时保留当前较高核心版本，仅增加 bilingual.N。
  */
 
 import fs from 'node:fs';
@@ -48,9 +53,11 @@ function die(message) {
 
 function parseArgs(argv) {
     const result = {};
+
     for (let i = 0; i < argv.length; i++) {
         const item = argv[i];
         if (!item.startsWith('--')) continue;
+
         const key = item.slice(2);
         const value = argv[i + 1];
 
@@ -61,6 +68,7 @@ function parseArgs(argv) {
         result[key] = value;
         i++;
     }
+
     return result;
 }
 
@@ -94,10 +102,26 @@ function directiveValue(meta, name) {
     return meta.match(re)?.[1]?.trim() || '';
 }
 
-function upstreamCoreVersion(version) {
+function coreVersion(version) {
     const match = version.match(/^(\d+(?:\.\d+)+)/);
-    if (!match) die(`无法识别上游版本号：${version}`);
+    if (!match) die(`无法识别版本号：${version}`);
     return match[1];
+}
+
+function compareCoreVersions(left, right) {
+    const a = left.split('.').map(Number);
+    const b = right.split('.').map(Number);
+    const length = Math.max(a.length, b.length);
+
+    for (let i = 0; i < length; i++) {
+        const av = a[i] ?? 0;
+        const bv = b[i] ?? 0;
+
+        if (av > bv) return 1;
+        if (av < bv) return -1;
+    }
+
+    return 0;
 }
 
 function currentBuildSerial(version) {
@@ -111,6 +135,33 @@ function currentBuildSerial(version) {
     }
 
     return Number(match[1]);
+}
+
+function selectReleaseCore(upstreamVersion, currentVersion) {
+    const upstreamCore = coreVersion(upstreamVersion);
+    const currentCore = coreVersion(currentVersion);
+    const comparison = compareCoreVersions(upstreamCore, currentCore);
+
+    if (comparison >= 0) {
+        return {
+            releaseCore: upstreamCore,
+            upstreamCore,
+            currentCore,
+            heldCurrentCore: false,
+        };
+    }
+
+    console.warn(
+        `BUILD_WARNING=上游核心版本从 ${currentCore} 降为 ${upstreamCore}，` +
+        `代码继续跟随上游，但双语发布版本暂时保留 ${currentCore} 以避免版本号倒退。`
+    );
+
+    return {
+        releaseCore: currentCore,
+        upstreamCore,
+        currentCore,
+        heldCurrentCore: true,
+    };
 }
 
 function setUniqueDirective(lines, key, value) {
@@ -153,9 +204,14 @@ function rebuildMetadata(upstreamMeta, currentMeta) {
     if (!upstreamVersion) die('最新上游缺少 @version');
     if (!currentVersion) die('当前双语版缺少 @version');
 
-    const core = upstreamCoreVersion(upstreamVersion);
+    const versionPolicy = selectReleaseCore(
+        upstreamVersion,
+        currentVersion
+    );
+
     const serial = currentBuildSerial(currentVersion) + 1;
-    const newVersion = `${core}-bilingual.${serial}`;
+    const newVersion =
+        `${versionPolicy.releaseCore}-bilingual.${serial}`;
 
     const lines = upstreamMeta.split('\n');
 
@@ -196,6 +252,8 @@ function rebuildMetadata(upstreamMeta, currentMeta) {
         meta: lines.join('\n'),
         newVersion,
         upstreamVersion,
+        releaseCore: versionPolicy.releaseCore,
+        heldCurrentCore: versionPolicy.heldCurrentCore,
     };
 }
 
@@ -289,7 +347,8 @@ function assertNoConflictMarkers(text) {
      * 原脚本可能本来就包含 ======== 之类的分隔线，
      * 不能仅凭字符串出现就判定为冲突。
      */
-    const conflictPattern = /^(<<<<<<<(?:\s|$)|=======(?:\s*$)|>>>>>>>(?:\s|$))/m;
+    const conflictPattern =
+        /^(<<<<<<<(?:\s|$)|=======(?:\s*$)|>>>>>>>(?:\s|$))/m;
 
     const match = text.match(conflictPattern);
 
@@ -395,6 +454,8 @@ syntaxCheck(args.output);
 
 console.log(`BUILD_STATUS=${merged.status}`);
 console.log(`UPSTREAM_VERSION=${metadata.upstreamVersion}`);
+console.log(`RELEASE_CORE_VERSION=${metadata.releaseCore}`);
+console.log(`VERSION_CORE_HELD=${metadata.heldCurrentCore}`);
 console.log(`NEW_VERSION=${metadata.newVersion}`);
 
 if (merged.status === 'fallback-ours') {

@@ -8,7 +8,15 @@ env:
 
 on:
   schedule:
-    - cron: "17 */6 * * *"
+    # 上游 main.user.js 的固定周度任务：
+    # UTC 周日 16:00 = 北京时间周一 00:00
+    # 留出约 47 分钟给上游任务执行，并避开整点高峰。
+    - cron: "47 16 * * 0"
+
+    # 平日轻量兜底检查：
+    # UTC 01:37 = 北京时间 09:37
+    # 只比较远程 SHA；无变化时不会 checkout / rebuild。
+    - cron: "37 1 * * *"
 
   workflow_dispatch:
     inputs:
@@ -26,12 +34,97 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync-and-rebuild:
+  # ----------------------------------------------------------
+  # 第一层：超轻量检查
+  #
+  # 平时只通过 git ls-remote 比较两个远程分支的 SHA。
+  # 如果完全一致，这次 Actions 到这里就结束。
+  # ----------------------------------------------------------
+  probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    outputs:
+      old: ${{ steps.probe.outputs.old }}
+      new: ${{ steps.probe.outputs.new }}
+      run_full: ${{ steps.probe.outputs.run_full }}
+      reason: ${{ steps.probe.outputs.reason }}
+
+    steps:
+      - name: Lightweight upstream check
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OLD="$(
+            git ls-remote \
+              "https://github.com/${GITHUB_REPOSITORY}.git" \
+              "refs/heads/${MIRROR_BRANCH}" \
+            | awk '{print $1}'
+          )"
+
+          NEW="$(
+            git ls-remote \
+              "https://github.com/${UPSTREAM_REPO}.git" \
+              "refs/heads/${UPSTREAM_BRANCH}" \
+            | awk '{print $1}'
+          )"
+
+          if [ -z "$OLD" ]; then
+            echo "::error::无法读取本仓库 ${MIRROR_BRANCH} 分支。"
+            exit 1
+          fi
+
+          if [ -z "$NEW" ]; then
+            echo "::error::无法读取上游 ${UPSTREAM_BRANCH} 分支。"
+            exit 1
+          fi
+
+          FORCE="${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild || false }}"
+
+          echo "old=${OLD}" >> "$GITHUB_OUTPUT"
+          echo "new=${NEW}" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=force-rebuild" >> "$GITHUB_OUTPUT"
+          elif [ "$OLD" != "$NEW" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=upstream-changed" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_full=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no-change" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "## 上游轻量检查"
+            echo
+            echo "- 本仓库镜像：\`${OLD}\`"
+            echo "- 上游最新版：\`${NEW}\`"
+
+            if [ "$FORCE" = "true" ]; then
+              echo "- 结果：🧪 手动要求强制重建"
+            elif [ "$OLD" != "$NEW" ]; then
+              echo "- 结果：🔄 发现上游变化，将启动完整同步"
+            else
+              echo "- 结果：✅ SHA 一致，无需进一步处理"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------
+  # 第二层：只有上游变化 / 手动强制时才运行
+  # ----------------------------------------------------------
+  sync-and-rebuild:
+    needs: probe
+    if: needs.probe.outputs.run_full == 'true'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout bilingual
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.BILINGUAL_BRANCH }}
           fetch-depth: 0
@@ -55,10 +148,12 @@ jobs:
           git fetch upstream \
             "${UPSTREAM_BRANCH}"
 
-      - name: Detect upstream changes
+      - name: Detect exact upstream changes
         id: detect
         shell: bash
         run: |
+          set -euo pipefail
+
           OLD="$(git rev-parse origin/${MIRROR_BRANCH})"
           NEW="$(git rev-parse upstream/${UPSTREAM_BRANCH})"
 
@@ -85,36 +180,89 @@ jobs:
               echo "core_changed=true" >> "$GITHUB_OUTPUT"
               echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
             fi
+
+            if git diff --quiet \
+              "$OLD" \
+              "$NEW" \
+              -- README.md; then
+              echo "readme_changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "readme_changed=true" >> "$GITHUB_OUTPUT"
+            fi
           elif [ "$FORCE" = "true" ]; then
             echo "core_changed=false" >> "$GITHUB_OUTPUT"
+            echo "readme_changed=false" >> "$GITHUB_OUTPUT"
             echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
           else
             echo "core_changed=false" >> "$GITHUB_OUTPUT"
+            echo "readme_changed=false" >> "$GITHUB_OUTPUT"
             echo "rebuild_needed=false" >> "$GITHUB_OUTPUT"
           fi
 
           echo "旧上游镜像：$OLD"
           echo "最新上游：  $NEW"
-          echo "核心文件变化：$(cat "$GITHUB_OUTPUT" | grep '^core_changed=' | tail -1 | cut -d= -f2-)"
           echo "强制重建：  $FORCE"
 
-      - name: Nothing to do
-        if: >
-          steps.detect.outputs.upstream_changed != 'true' &&
-          steps.detect.outputs.force != 'true'
-        run: |
-          echo "当前已与上游保持同步，无需处理。"
-          echo "✅ 当前已与 upstream 保持同步。" \
-            >> "$GITHUB_STEP_SUMMARY"
-
+      # 上游分支如果发生 force-push / 历史回退，不允许自动跟随。
       - name: Verify mirror can fast-forward
         if: steps.detect.outputs.upstream_changed == 'true'
         run: |
           if ! git merge-base --is-ancestor \
             "origin/${MIRROR_BRANCH}" \
             "upstream/${UPSTREAM_BRANCH}"; then
-            echo "::error::${MIRROR_BRANCH} 已偏离 upstream，自动同步停止。"
+            echo "::error::检测到上游历史回退或分支改写，自动同步停止。"
+            echo "::error::请人工确认 upstream/${UPSTREAM_BRANCH} 后再处理。"
             exit 1
+          fi
+
+      # 正常的新提交即使把版本号改低，也视为上游主动回退并继续跟随。
+      # 这里只记录 Warning，不阻断同步。真正的历史改写仍由上一阶段拦截。
+      - name: Observe upstream version rollback
+        id: version_check
+        if: steps.detect.outputs.upstream_changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OLD="${{ steps.detect.outputs.old }}"
+          NEW="${{ steps.detect.outputs.new }}"
+
+          OLD_VERSION="$(
+            git show "${OLD}:main.user.js" \
+            | sed -n -E 's/^\/\/ @version[[:space:]]+(.+)/\1/p' \
+            | head -1
+          )"
+
+          NEW_VERSION="$(
+            git show "${NEW}:main.user.js" \
+            | sed -n -E 's/^\/\/ @version[[:space:]]+(.+)/\1/p' \
+            | head -1
+          )"
+
+          echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rollback=false" >> "$GITHUB_OUTPUT"
+
+          echo "当前镜像版本：${OLD_VERSION:-未知}"
+          echo "最新上游版本：${NEW_VERSION:-未知}"
+
+          if [ -n "$OLD_VERSION" ] && \
+             [ -n "$NEW_VERSION" ] && \
+             [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+
+            LOWEST="$(
+              printf '%s\n%s\n' \
+                "$OLD_VERSION" \
+                "$NEW_VERSION" \
+              | sort -V \
+              | head -1
+            )"
+
+            if [ "$LOWEST" = "$NEW_VERSION" ]; then
+              echo "rollback=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::检测到上游版本号降低：${OLD_VERSION} → ${NEW_VERSION}"
+              echo "::warning::Git 历史仍正常向前，因此按上游主动回退处理并继续同步。"
+            fi
           fi
 
       - name: Save three-way merge inputs
@@ -133,21 +281,13 @@ jobs:
             > /tmp/new-main.user.js
 
       - name: Prepare latest upstream mirror
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
         run: |
           git branch -f \
             "${MIRROR_BRANCH}" \
             "upstream/${UPSTREAM_BRANCH}"
 
-      # 核心变化：
-      # 不再把完整上游 merge 进 bilingual。
-      # 只从最新上游提取真正需要的两个源文件。
-      - name: Sync only required upstream files
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
+      # bilingual 不再 merge 整个上游，只提取运行所需的核心文件。
+      - name: Sync required upstream files
         run: |
           NEW="${{ steps.detect.outputs.new }}"
 
@@ -189,28 +329,96 @@ jobs:
             | cut -d= -f2-
           )"
 
+          RELEASE_CORE_VERSION="$(
+            grep '^RELEASE_CORE_VERSION=' /tmp/bilingual-build.log \
+            | tail -1 \
+            | cut -d= -f2-
+          )"
+
+          VERSION_CORE_HELD="$(
+            grep '^VERSION_CORE_HELD=' /tmp/bilingual-build.log \
+            | tail -1 \
+            | cut -d= -f2-
+          )"
+
           test -n "$STATUS"
           test -n "$VERSION"
+          test -n "$RELEASE_CORE_VERSION"
+          test -n "$VERSION_CORE_HELD"
 
           echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "upstream_version=${UPSTREAM_VERSION}" \
             >> "$GITHUB_OUTPUT"
+          echo "release_core_version=${RELEASE_CORE_VERSION}" \
+            >> "$GITHUB_OUTPUT"
+          echo "version_core_held=${VERSION_CORE_HELD}" \
+            >> "$GITHUB_OUTPUT"
+
+          if [ "$VERSION_CORE_HELD" = "true" ]; then
+            echo "::warning::上游代码已按正常提交回退，但双语脚本发布版本号保持单调递增。"
+          fi
 
           if [ "$STATUS" = "fallback-ours" ]; then
             echo "::warning::上游与双语修改存在重叠，已自动优先保留双语冲突区。"
           fi
 
+      # README 不再手工复制一份后长期失去更新。
+      # 每次完整同步时都以最新上游 README 为主体，
+      # 再叠加 .github/README-bilingual.md 中属于本仓库的说明。
+      - name: Rebuild README from upstream
+        shell: bash
+        run: |
+          NEW="${{ steps.detect.outputs.new }}"
+
+          git show "${NEW}:README.md" \
+            > /tmp/upstream-README.md
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          upstream = Path("/tmp/upstream-README.md").read_text(encoding="utf-8")
+          custom = Path(".github/README-bilingual.md").read_text(encoding="utf-8")
+
+          # bilingual 分支已经瘦身，原 README 中少数相对路径需要指回上游。
+          upstream = upstream.replace(
+              "(./README_zh-TW.md)",
+              "(https://github.com/maboloshi/github-chinese/blob/gh-pages/README_zh-TW.md)",
+          )
+          upstream = upstream.replace(
+              "(vscode-extension/README.md)",
+              "(https://github.com/maboloshi/github-chinese/blob/gh-pages/vscode-extension/README.md)",
+          )
+
+          marker = "<!-- BILINGUAL_APPENDIX -->"
+          if marker not in custom:
+              raise SystemExit(
+                  ".github/README-bilingual.md 缺少 BILINGUAL_APPENDIX 标记"
+              )
+
+          notice, appendix = custom.split(marker, 1)
+
+          output = (
+              notice.strip()
+              + "\n\n---\n\n"
+              + upstream.strip()
+              + "\n\n---\n\n"
+              + appendix.strip()
+              + "\n"
+          )
+
+          Path("README.md").write_text(output, encoding="utf-8")
+          PY
+
       - name: Final safety checks
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
         shell: bash
         run: |
           test -f main.user.js
           test -f locals.js
           test -f main-bilingual.user.js
           test -f tools/rebuild-bilingual.mjs
+          test -f .github/README-bilingual.md
+          test -f README.md
 
           node --check main.user.js
           node --check main-bilingual.user.js
@@ -229,10 +437,11 @@ jobs:
             exit 1
           fi
 
-          # bilingual 自动任务只允许修改这三个产品文件。
+          # 自动任务只允许修改这四个生成 / 同步文件。
           UNEXPECTED="$(
             git diff --name-only \
-            | grep -vE '^(main\.user\.js|locals\.js|main-bilingual\.user\.js)$' \
+            | grep -vE \
+              '^(main\.user\.js|locals\.js|main-bilingual\.user\.js|README\.md)$' \
             || true
           )"
 
@@ -243,36 +452,30 @@ jobs:
           fi
 
       - name: Commit bilingual changes
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
         shell: bash
         run: |
-          # 只提交产品层允许自动维护的三个文件。
           git add \
             main.user.js \
             locals.js \
-            main-bilingual.user.js
+            main-bilingual.user.js \
+            README.md
 
           if git diff --cached --quiet; then
-            echo "bilingual 没有需要提交的核心文件变化。"
+            echo "bilingual 没有需要提交的变化。"
             exit 0
           fi
 
           VERSION="${{ steps.rebuild.outputs.version }}"
 
           if [ -n "$VERSION" ]; then
-            MESSAGE="自动同步核心文件并重建双语脚本 ${VERSION}"
+            MESSAGE="自动同步上游并重建双语脚本 ${VERSION}"
           else
-            MESSAGE="自动同步上游核心文件"
+            MESSAGE="自动同步上游内容"
           fi
 
           git commit -m "$MESSAGE"
 
       - name: Push mirror and bilingual atomically
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
         run: |
           git push --atomic \
             origin \
@@ -280,9 +483,6 @@ jobs:
             "${BILINGUAL_BRANCH}:${BILINGUAL_BRANCH}"
 
       - name: Build summary
-        if: >
-          steps.detect.outputs.upstream_changed == 'true' ||
-          steps.detect.outputs.force == 'true'
         shell: bash
         run: |
           {
@@ -292,18 +492,23 @@ jobs:
             echo "- 上游新提交：\`${{ steps.detect.outputs.new }}\`"
             echo "- 上游是否更新：\`${{ steps.detect.outputs.upstream_changed }}\`"
             echo "- 核心文件是否变化：\`${{ steps.detect.outputs.core_changed }}\`"
+            echo "- README 是否变化：\`${{ steps.detect.outputs.readme_changed }}\`"
             echo "- 是否重建双语脚本：\`${{ steps.detect.outputs.rebuild_needed }}\`"
+            echo "- 上游版本号是否降低：\`${{ steps.version_check.outputs.rollback || 'false' }}\`"
+
+            if [ -n "${{ steps.rebuild.outputs.version }}" ]; then
+              echo "- 新双语版本：\`${{ steps.rebuild.outputs.version }}\`"
+              echo "- 双语发布核心版本：\`${{ steps.rebuild.outputs.release_core_version }}\`"
+              echo "- 是否因上游回退保留较高发布核心版本：\`${{ steps.rebuild.outputs.version_core_held }}\`"
+              echo "- 合并方式：\`${{ steps.rebuild.outputs.status }}\`"
+            fi
+
             echo
-            echo "### bilingual 自动维护范围"
+            echo "### 自动维护范围"
             echo "- \`main.user.js\`"
             echo "- \`locals.js\`"
             echo "- \`main-bilingual.user.js\`"
-
-            if [ -n "${{ steps.rebuild.outputs.version }}" ]; then
-              echo
-              echo "- 新双语版本：\`${{ steps.rebuild.outputs.version }}\`"
-              echo "- 合并方式：\`${{ steps.rebuild.outputs.status }}\`"
-            fi
+            echo "- \`README.md\`（上游主体 + 本仓库说明）"
 
             if [ "${{ steps.rebuild.outputs.status }}" = "fallback-ours" ]; then
               echo
@@ -311,6 +516,6 @@ jobs:
               echo "已保留双语冲突区，并吸收其他非冲突上游修改。"
             else
               echo
-              echo "✅ 自动同步/维护完成。"
+              echo "✅ 自动同步 / 维护完成。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
