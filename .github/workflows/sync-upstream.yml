@@ -79,19 +79,23 @@ jobs:
               "$OLD" \
               "$NEW" \
               -- main.user.js locals.js; then
-
+              echo "core_changed=false" >> "$GITHUB_OUTPUT"
               echo "rebuild_needed=false" >> "$GITHUB_OUTPUT"
             else
+              echo "core_changed=true" >> "$GITHUB_OUTPUT"
               echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
             fi
           elif [ "$FORCE" = "true" ]; then
+            echo "core_changed=false" >> "$GITHUB_OUTPUT"
             echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
           else
+            echo "core_changed=false" >> "$GITHUB_OUTPUT"
             echo "rebuild_needed=false" >> "$GITHUB_OUTPUT"
           fi
 
           echo "旧上游镜像：$OLD"
           echo "最新上游：  $NEW"
+          echo "核心文件变化：$(cat "$GITHUB_OUTPUT" | grep '^core_changed=' | tail -1 | cut -d= -f2-)"
           echo "强制重建：  $FORCE"
 
       - name: Nothing to do
@@ -109,7 +113,6 @@ jobs:
           if ! git merge-base --is-ancestor \
             "origin/${MIRROR_BRANCH}" \
             "upstream/${UPSTREAM_BRANCH}"; then
-
             echo "::error::${MIRROR_BRANCH} 已偏离 upstream，自动同步停止。"
             exit 1
           fi
@@ -129,7 +132,7 @@ jobs:
           git show "${NEW}:main.user.js" \
             > /tmp/new-main.user.js
 
-      - name: Prepare latest gh-pages locally
+      - name: Prepare latest upstream mirror
         if: >
           steps.detect.outputs.upstream_changed == 'true' ||
           steps.detect.outputs.force == 'true'
@@ -138,18 +141,21 @@ jobs:
             "${MIRROR_BRANCH}" \
             "upstream/${UPSTREAM_BRANCH}"
 
-      - name: Merge latest upstream into bilingual
-        if: steps.detect.outputs.upstream_changed == 'true'
+      # 核心变化：
+      # 不再把完整上游 merge 进 bilingual。
+      # 只从最新上游提取真正需要的两个源文件。
+      - name: Sync only required upstream files
+        if: >
+          steps.detect.outputs.upstream_changed == 'true' ||
+          steps.detect.outputs.force == 'true'
         run: |
-          git switch -C \
-            "${BILINGUAL_BRANCH}" \
-            "origin/${BILINGUAL_BRANCH}"
+          NEW="${{ steps.detect.outputs.new }}"
 
-          git merge \
-            --no-edit \
-            --no-commit \
-            --no-ff \
-            "${MIRROR_BRANCH}"
+          git show "${NEW}:main.user.js" \
+            > main.user.js
+
+          git show "${NEW}:locals.js" \
+            > locals.js
 
       - name: Rebuild main-bilingual.user.js
         id: rebuild
@@ -199,53 +205,79 @@ jobs:
         if: >
           steps.detect.outputs.upstream_changed == 'true' ||
           steps.detect.outputs.force == 'true'
+        shell: bash
         run: |
+          test -f main.user.js
+          test -f locals.js
+          test -f main-bilingual.user.js
+          test -f tools/rebuild-bilingual.mjs
+
+          node --check main.user.js
           node --check main-bilingual.user.js
 
           if grep -nE \
             '^(<<<<<<<|=======|>>>>>>>)' \
             main-bilingual.user.js; then
-
             echo "::error::发现未解决的 Git 冲突标记。"
             exit 1
           fi
 
-          test -f locals.js
-          test -f main.user.js
-          test -f main-bilingual.user.js
+          if ! grep -q \
+            'raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js' \
+            main-bilingual.user.js; then
+            echo "::error::双语脚本没有正确引用 bilingual/locals.js。"
+            exit 1
+          fi
 
-      - name: Commit bilingual rebuild
+          # bilingual 自动任务只允许修改这三个产品文件。
+          UNEXPECTED="$(
+            git diff --name-only \
+            | grep -vE '^(main\.user\.js|locals\.js|main-bilingual\.user\.js)$' \
+            || true
+          )"
+
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::发现预期之外的文件变化："
+            echo "$UNEXPECTED"
+            exit 1
+          fi
+
+      - name: Commit bilingual changes
         if: >
           steps.detect.outputs.upstream_changed == 'true' ||
           steps.detect.outputs.force == 'true'
         shell: bash
         run: |
-          git add -A
+          # 只提交产品层允许自动维护的三个文件。
+          git add \
+            main.user.js \
+            locals.js \
+            main-bilingual.user.js
 
           if git diff --cached --quiet; then
-            echo "没有需要提交的变化。"
+            echo "bilingual 没有需要提交的核心文件变化。"
             exit 0
           fi
 
           VERSION="${{ steps.rebuild.outputs.version }}"
 
           if [ -n "$VERSION" ]; then
-            MESSAGE="自动同步上游并重建双语脚本 ${VERSION}"
+            MESSAGE="自动同步核心文件并重建双语脚本 ${VERSION}"
           else
-            MESSAGE="自动同步上游"
+            MESSAGE="自动同步上游核心文件"
           fi
 
           git commit -m "$MESSAGE"
 
-      - name: Push both branches atomically
+      - name: Push mirror and bilingual atomically
         if: >
           steps.detect.outputs.upstream_changed == 'true' ||
           steps.detect.outputs.force == 'true'
         run: |
           git push --atomic \
             origin \
-            "${MIRROR_BRANCH}" \
-            "${BILINGUAL_BRANCH}"
+            "${MIRROR_BRANCH}:${MIRROR_BRANCH}" \
+            "${BILINGUAL_BRANCH}:${BILINGUAL_BRANCH}"
 
       - name: Build summary
         if: >
@@ -254,14 +286,21 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## GitHub 中英双语自动同步"
+            echo "## GitHub 中英双语自动维护"
             echo
             echo "- 上游旧提交：\`${{ steps.detect.outputs.old }}\`"
             echo "- 上游新提交：\`${{ steps.detect.outputs.new }}\`"
             echo "- 上游是否更新：\`${{ steps.detect.outputs.upstream_changed }}\`"
+            echo "- 核心文件是否变化：\`${{ steps.detect.outputs.core_changed }}\`"
             echo "- 是否重建双语脚本：\`${{ steps.detect.outputs.rebuild_needed }}\`"
+            echo
+            echo "### bilingual 自动维护范围"
+            echo "- \`main.user.js\`"
+            echo "- \`locals.js\`"
+            echo "- \`main-bilingual.user.js\`"
 
             if [ -n "${{ steps.rebuild.outputs.version }}" ]; then
+              echo
               echo "- 新双语版本：\`${{ steps.rebuild.outputs.version }}\`"
               echo "- 合并方式：\`${{ steps.rebuild.outputs.status }}\`"
             fi
@@ -269,9 +308,9 @@ jobs:
             if [ "${{ steps.rebuild.outputs.status }}" = "fallback-ours" ]; then
               echo
               echo "⚠️ 上游与双语修改发生重叠。"
-              echo "自动流程已保留双语冲突区，并吸收所有非冲突上游修改。"
+              echo "已保留双语冲突区，并吸收其他非冲突上游修改。"
             else
               echo
-              echo "✅ 自动同步/重建完成。"
+              echo "✅ 自动同步/维护完成。"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
