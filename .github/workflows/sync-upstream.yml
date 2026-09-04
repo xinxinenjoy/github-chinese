@@ -9,14 +9,14 @@ env:
 on:
   schedule:
     # 上游 main.user.js 的固定周度任务：
-    # UTC 周日 16:00 = 北京时间周一 00:00
-    # 留出约 47 分钟给上游任务执行，并避开整点高峰。
-    - cron: "47 16 * * 0"
+    # 北京时间每周一 01:45
+    - cron: "45 1 * * 1"
+      timezone: "Asia/Shanghai"
 
     # 平日轻量兜底检查：
-    # UTC 01:37 = 北京时间 09:37
-    # 只比较远程 SHA；无变化时不会 checkout / rebuild。
+    # 北京时间每天 01:37 和 13:37
     - cron: "37 1,13 * * *"
+      timezone: "Asia/Shanghai"
 
   workflow_dispatch:
     inputs:
