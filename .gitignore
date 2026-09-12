@@ -18,7 +18,7 @@ main(local).js
 *.log
 
 # WorkBuddy AI 项目级目录
-.workbuddy-ai/
+.workbuddy/
 
 # Python（备用）
 __pycache__/
