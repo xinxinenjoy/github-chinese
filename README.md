@@ -466,7 +466,7 @@ GitHub 的 ajax 载入方式逐步从 [defunkt/jquery-pjax](https://github.com/d
 
 本仓库只对原项目做一层尽量轻量的“双语化”处理，不参与上游项目本身的开发。
 
-`gh-pages` 分支作为完整上游镜像，`bilingual` 分支只保留实际使用和自动维护所需的核心文件。
+本仓库只有 `bilingual` 一个分支，只保留实际使用和自动维护所需的核心文件。上游仓库仅作为文件来源，不再把它的内容镜像成本仓库的其他分支。
 
 自动维护采用两层机制：
 
@@ -478,8 +478,6 @@ GitHub 的 ajax 载入方式逐步从 [defunkt/jquery-pjax](https://github.com/d
 直接结束
 
 发现上游变化
-      ↓
-更新 gh-pages 镜像
       ↓
 同步 main.user.js / locals.js
       ↓
@@ -493,7 +491,7 @@ GitHub 的 ajax 载入方式逐步从 [defunkt/jquery-pjax](https://github.com/d
       ↓
 安全检查
       ↓
-更新 bilingual
+提交并推送 bilingual
 ```
 
 日常只进行很轻量的远程版本检查；在上游常规更新窗口之后会额外进行一次重点检查。具体执行计划以 [Sync Upstream & Rebuild Bilingual](./.github/workflows/sync-upstream.yml) 中的配置为准，不在 README 中重复写死。
@@ -503,6 +501,7 @@ GitHub 的 ajax 载入方式逐步从 [defunkt/jquery-pjax](https://github.com/d
 - `main-bilingual.user.js`：油猴实际安装和运行的中英双语脚本。
 - `locals.js`：自动跟随上游更新的中文词库。
 - `main.user.js`：上游最新版主脚本，用于版本观察和三方重建。
+- `.upstream-sync.json`：记录上一次同步到的上游提交与上游版本号，供轻量检查比对。
 - `tools/rebuild-bilingual.mjs`：双语脚本自动重建工具。
 - `.github/workflows/sync-upstream.yml`：上游检查、同步和重建流程。
 
