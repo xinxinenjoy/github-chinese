@@ -197,6 +197,31 @@ function setUniqueDirective(lines, key, value) {
     }
 }
 
+/**
+ * 在元数据块末尾写入构建信息，便于直接看出本脚本基于上游哪一版。
+ *
+ * 位置刻意选在元数据块内：元数据始终由「最新上游 + 本工具覆盖」重建，
+ * 不参与三方合并，因此每次重建都会刷新，也不会像正文那样残留旧值。
+ */
+function insertBuildInfo(lines, upstreamVersion, newVersion) {
+    const end = lines.findIndex(
+        line => line.trim() === '// ==/UserScript=='
+    );
+
+    if (end < 0) {
+        die('元数据缺少结束标记，无法写入构建信息');
+    }
+
+    lines.splice(
+        end,
+        0,
+        '// ---------------------------------------------------------------',
+        `// 上游基线  maboloshi/github-chinese ${upstreamVersion}`,
+        `// 双语版本  ${newVersion}`,
+        '// ---------------------------------------------------------------'
+    );
+}
+
 function rebuildMetadata(upstreamMeta, currentMeta) {
     const upstreamVersion = directiveValue(upstreamMeta, 'version');
     const currentVersion = directiveValue(currentMeta, 'version');
@@ -247,6 +272,8 @@ function rebuildMetadata(upstreamMeta, currentMeta) {
             '最新上游未找到 locals.js 的 @require。上游加载方式可能已改变，为避免生成错误版本已停止。'
         );
     }
+
+    insertBuildInfo(lines, upstreamVersion, newVersion);
 
     return {
         meta: lines.join('\n'),
