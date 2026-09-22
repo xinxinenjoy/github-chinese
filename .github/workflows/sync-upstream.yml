@@ -252,9 +252,12 @@ jobs:
 
       # 正常的新提交即使把版本号改低，也视为上游主动回退并继续跟随。
       # 这里只记录 Warning，不阻断同步。真正的历史改写仍由上一阶段拦截。
+      #
+      # 不做条件限制：提取到的上游版本号会写进提交说明与状态文件，
+      # 手动 force_rebuild（此时上游 SHA 未变）同样需要它，
+      # 否则提交说明会缺少「（上游 x.y.z-日期）」这一段。
       - name: Observe upstream version rollback
         id: version_check
-        if: steps.detect.outputs.upstream_changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
