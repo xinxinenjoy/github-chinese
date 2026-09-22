@@ -3,8 +3,9 @@ name: Sync Upstream & Rebuild Bilingual
 env:
   UPSTREAM_REPO: maboloshi/github-chinese
   UPSTREAM_BRANCH: gh-pages
-  MIRROR_BRANCH: gh-pages
   BILINGUAL_BRANCH: bilingual
+  # 把"上次同步到的上游提交"记在本仓库里，取代原来的 gh-pages 镜像分支。
+  STATE_FILE: .upstream-sync.json
 
 on:
   schedule:
@@ -37,7 +38,7 @@ jobs:
   # ----------------------------------------------------------
   # 第一层：超轻量检查
   #
-  # 平时只通过 git ls-remote 比较两个远程分支的 SHA。
+  # 读状态文件里记录的上游 SHA，与上游当前 SHA 比较。
   # 如果完全一致，这次 Actions 到这里就结束。
   # ----------------------------------------------------------
   probe:
@@ -57,11 +58,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 上次同步到的上游提交记录在 bilingual 分支的状态文件里。
+          # raw 有 CDN 缓存，最坏情况是刚同步完又判成“有变化”，
+          # 多跑一次完整流程 —— 结果幂等，无害。
           OLD="$(
-            git ls-remote \
-              "https://github.com/${GITHUB_REPOSITORY}.git" \
-              "refs/heads/${MIRROR_BRANCH}" \
-            | awk '{print $1}'
+            curl -fsSL \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${BILINGUAL_BRANCH}/${STATE_FILE}" \
+            2>/dev/null \
+            | jq -r '.upstream_sha // empty' \
+            2>/dev/null \
+            || true
           )"
 
           NEW="$(
@@ -70,11 +76,6 @@ jobs:
               "refs/heads/${UPSTREAM_BRANCH}" \
             | awk '{print $1}'
           )"
-
-          if [ -z "$OLD" ]; then
-            echo "::error::无法读取本仓库 ${MIRROR_BRANCH} 分支。"
-            exit 1
-          fi
 
           if [ -z "$NEW" ]; then
             echo "::error::无法读取上游 ${UPSTREAM_BRANCH} 分支。"
@@ -89,6 +90,9 @@ jobs:
           if [ "$FORCE" = "true" ]; then
             echo "run_full=true" >> "$GITHUB_OUTPUT"
             echo "reason=force-rebuild" >> "$GITHUB_OUTPUT"
+          elif [ -z "$OLD" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "reason=missing-state" >> "$GITHUB_OUTPUT"
           elif [ "$OLD" != "$NEW" ]; then
             echo "run_full=true" >> "$GITHUB_OUTPUT"
             echo "reason=upstream-changed" >> "$GITHUB_OUTPUT"
@@ -100,11 +104,13 @@ jobs:
           {
             echo "## 上游轻量检查"
             echo
-            echo "- 本仓库镜像：\`${OLD}\`"
+            echo "- 已同步上游：\`${OLD:-（无记录）}\`"
             echo "- 上游最新版：\`${NEW}\`"
 
             if [ "$FORCE" = "true" ]; then
               echo "- 结果：🧪 手动要求强制重建"
+            elif [ -z "$OLD" ]; then
+              echo "- 结果：📄 缺少状态文件记录，将启动完整同步"
             elif [ "$OLD" != "$NEW" ]; then
               echo "- 结果：🔄 发现上游变化，将启动完整同步"
             else
@@ -135,16 +141,16 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream and fetch
+      - name: Fetch bilingual and upstream
         run: |
           git remote remove upstream 2>/dev/null || true
           git remote add upstream \
             "https://github.com/${UPSTREAM_REPO}.git"
 
           git fetch origin \
-            "${MIRROR_BRANCH}" \
             "${BILINGUAL_BRANCH}"
 
+          # 上游只作为文件来源，不再镜像成本仓库的另一个分支。
           git fetch upstream \
             "${UPSTREAM_BRANCH}"
 
@@ -154,8 +160,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          OLD="$(git rev-parse origin/${MIRROR_BRANCH})"
+          # 基准 = 上次同步到的上游提交，由轻量检查从状态文件读出。
+          OLD="${{ needs.probe.outputs.old }}"
           NEW="$(git rev-parse upstream/${UPSTREAM_BRANCH})"
+
+          if [ -z "$OLD" ]; then
+            echo "::error::${STATE_FILE} 里没有 upstream_sha，无法确定三方合并的基准版本。"
+            echo "::error::请参照上一次成功运行的 Summary 补上该文件后重试。"
+            exit 1
+          fi
+
+          if ! git cat-file -e "${OLD}^{commit}" 2>/dev/null; then
+            echo "::error::本地找不到上次同步的上游提交 ${OLD}。"
+            echo "::error::通常意味着上游历史已被改写，请人工确认后再处理。"
+            exit 1
+          fi
 
           echo "old=${OLD}" >> "$GITHUB_OUTPUT"
           echo "new=${NEW}" >> "$GITHUB_OUTPUT"
@@ -199,16 +218,17 @@ jobs:
             echo "rebuild_needed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "旧上游镜像：$OLD"
+          echo "上次同步：  $OLD"
           echo "最新上游：  $NEW"
           echo "强制重建：  $FORCE"
 
       # 上游分支如果发生 force-push / 历史回退，不允许自动跟随。
-      - name: Verify mirror can fast-forward
+      # 直接判断“上次同步的上游提交”是否仍是上游新 HEAD 的祖先。
+      - name: Verify upstream history is intact
         if: steps.detect.outputs.upstream_changed == 'true'
         run: |
           if ! git merge-base --is-ancestor \
-            "origin/${MIRROR_BRANCH}" \
+            "${{ steps.detect.outputs.old }}" \
             "upstream/${UPSTREAM_BRANCH}"; then
             echo "::error::检测到上游历史回退或分支改写，自动同步停止。"
             echo "::error::请人工确认 upstream/${UPSTREAM_BRANCH} 后再处理。"
@@ -243,7 +263,7 @@ jobs:
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "rollback=false" >> "$GITHUB_OUTPUT"
 
-          echo "当前镜像版本：${OLD_VERSION:-未知}"
+          echo "上次同步版本：${OLD_VERSION:-未知}"
           echo "最新上游版本：${NEW_VERSION:-未知}"
 
           if [ -n "$OLD_VERSION" ] && \
@@ -279,12 +299,6 @@ jobs:
 
           git show "${NEW}:main.user.js" \
             > /tmp/new-main.user.js
-
-      - name: Prepare latest upstream mirror
-        run: |
-          git branch -f \
-            "${MIRROR_BRANCH}" \
-            "upstream/${UPSTREAM_BRANCH}"
 
       # bilingual 不再 merge 整个上游，只提取运行所需的核心文件。
       - name: Sync required upstream files
@@ -437,11 +451,11 @@ jobs:
             exit 1
           fi
 
-          # 自动任务只允许修改这四个生成 / 同步文件。
+          # 自动任务只允许修改这几个生成 / 同步文件。
           UNEXPECTED="$(
             git diff --name-only \
             | grep -vE \
-              '^(main\.user\.js|locals\.js|main-bilingual\.user\.js|README\.md)$' \
+              '^(main\.user\.js|locals\.js|main-bilingual\.user\.js|README\.md|\.upstream-sync\.json)$' \
             || true
           )"
 
@@ -454,11 +468,20 @@ jobs:
       - name: Commit bilingual changes
         shell: bash
         run: |
+          # 记录本次同步到的上游提交，供下一次轻量检查比对。
+          printf '{\n  "upstream_sha": "%s",\n  "upstream_version": "%s",\n  "synced_at": "%s",\n  "bilingual_version": "%s"\n}\n' \
+            "${{ steps.detect.outputs.new }}" \
+            "${{ steps.version_check.outputs.new_version }}" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${{ steps.rebuild.outputs.version }}" \
+            > "${STATE_FILE}"
+
           git add \
             main.user.js \
             locals.js \
             main-bilingual.user.js \
-            README.md
+            README.md \
+            "${STATE_FILE}"
 
           if git diff --cached --quiet; then
             echo "bilingual 没有需要提交的变化。"
@@ -466,20 +489,26 @@ jobs:
           fi
 
           VERSION="${{ steps.rebuild.outputs.version }}"
+          UPSTREAM_VERSION="${{ steps.version_check.outputs.new_version }}"
 
-          if [ -n "$VERSION" ]; then
+          # 提交说明里带上上游自身的版本号（含日期），
+          # 便于在提交列表里直接看出这次同步的是上游哪一天的版本。
+          if [ -n "$VERSION" ] && [ -n "$UPSTREAM_VERSION" ]; then
+            MESSAGE="自动同步上游并重建双语脚本 ${VERSION}（上游 ${UPSTREAM_VERSION}）"
+          elif [ -n "$VERSION" ]; then
             MESSAGE="自动同步上游并重建双语脚本 ${VERSION}"
+          elif [ -n "$UPSTREAM_VERSION" ]; then
+            MESSAGE="自动同步上游内容（上游 ${UPSTREAM_VERSION}）"
           else
             MESSAGE="自动同步上游内容"
           fi
 
           git commit -m "$MESSAGE"
 
-      - name: Push mirror and bilingual atomically
+      - name: Push bilingual
         run: |
-          git push --atomic \
+          git push \
             origin \
-            "${MIRROR_BRANCH}:${MIRROR_BRANCH}" \
             "${BILINGUAL_BRANCH}:${BILINGUAL_BRANCH}"
 
       - name: Build summary
@@ -509,6 +538,7 @@ jobs:
             echo "- \`locals.js\`"
             echo "- \`main-bilingual.user.js\`"
             echo "- \`README.md\`（上游主体 + 本仓库说明）"
+            echo "- \`${STATE_FILE}\`（记录已同步的上游提交）"
 
             if [ "${{ steps.rebuild.outputs.status }}" = "fallback-ours" ]; then
               echo
