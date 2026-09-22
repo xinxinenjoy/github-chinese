@@ -509,16 +509,17 @@ jobs:
           VERSION="${{ steps.rebuild.outputs.version }}"
           UPSTREAM_VERSION="${{ steps.version_check.outputs.new_version }}"
 
-          # 提交说明里带上上游自身的版本号（含日期），
-          # 便于在提交列表里直接看出这次同步的是上游哪一天的版本。
+          # 提交说明以版本号开头，尽量短：
+          # 原前缀「自动同步上游并重建双语脚本」过长，在 GitHub 提交列表里
+          # 会把后面的版本号与上游日期挤到看不见，失去「一眼看出版本」的意义。
           if [ -n "$VERSION" ] && [ -n "$UPSTREAM_VERSION" ]; then
-            MESSAGE="自动同步上游并重建双语脚本 ${VERSION}（上游 ${UPSTREAM_VERSION}）"
+            MESSAGE="${VERSION}（上游 ${UPSTREAM_VERSION}）"
           elif [ -n "$VERSION" ]; then
-            MESSAGE="自动同步上游并重建双语脚本 ${VERSION}"
+            MESSAGE="${VERSION}"
           elif [ -n "$UPSTREAM_VERSION" ]; then
-            MESSAGE="自动同步上游内容（上游 ${UPSTREAM_VERSION}）"
+            MESSAGE="同步上游内容 ${UPSTREAM_VERSION}"
           else
-            MESSAGE="自动同步上游内容"
+            MESSAGE="同步上游内容"
           fi
 
           git commit -m "$MESSAGE"
