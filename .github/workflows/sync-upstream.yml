@@ -160,8 +160,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 基准 = 上次同步到的上游提交，由轻量检查从状态文件读出。
-          OLD="${{ needs.probe.outputs.old }}"
+          # 基准 = 上次同步到的上游提交。
+          # 优先读工作区里的状态文件：checkout 已经把它带下来了，
+          # 不依赖 raw 的 CDN 缓存。轻量检查读 raw 的结果只作兜底，
+          # 因为 raw 有缓存，刚推完状态文件时可能还读不到。
+          OLD=""
+
+          if [ -f "${STATE_FILE}" ]; then
+            OLD="$(
+              jq -r '.upstream_sha // empty' "${STATE_FILE}" \
+              2>/dev/null || true
+            )"
+          fi
+
+          if [ -z "$OLD" ]; then
+            OLD="${{ needs.probe.outputs.old }}"
+          fi
+
           NEW="$(git rev-parse upstream/${UPSTREAM_BRANCH})"
 
           if [ -z "$OLD" ]; then
