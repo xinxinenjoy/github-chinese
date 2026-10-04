@@ -27,6 +27,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+    loadCoverageRules,
+    injectCoverageRules,
+    assertCoverageMatches,
+} from './coverage-rules.mjs';
 
 const OWNER = 'xinxinenjoy';
 const REPO = 'github-chinese';
@@ -464,12 +469,18 @@ const metadata = rebuildMetadata(
 let output =
     `${metadata.meta}\n\n${merged.body.replace(/^\s+/, '')}`;
 
+// 覆盖规则是唯一真相源：重建时按 tools/bilingual-coverage.json 重写产物里
+// 的两个载体常量 ⇒ 调整覆盖范围只改规则文件，不用碰产物脚本。
+const coverageRules = loadCoverageRules();
+output = injectCoverageRules(output, coverageRules, '\n');
+
 if (!output.endsWith('\n')) {
     output += '\n';
 }
 
 assertNoConflictMarkers(output);
 assertStructure(output);
+assertCoverageMatches(output, coverageRules);
 
 fs.writeFileSync(
     args.output,
@@ -479,6 +490,8 @@ fs.writeFileSync(
 
 syntaxCheck(args.output);
 
+console.log(`COVERAGE_UI_SELECTORS=${coverageRules.uiSelectors.length}`);
+console.log(`COVERAGE_EXCLUDE_SELECTORS=${coverageRules.excludeSelectors.length}`);
 console.log(`BUILD_STATUS=${merged.status}`);
 console.log(`UPSTREAM_VERSION=${metadata.upstreamVersion}`);
 console.log(`RELEASE_CORE_VERSION=${metadata.releaseCore}`);
