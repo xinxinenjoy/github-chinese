@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.20
+// @version      1.9.4.4-bilingual.21
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.20
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.21
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
 // @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ---------------------------------------------------------------
 // 上游基线  maboloshi/github-chinese 1.9.4.4-2026-09-27
-// 双语版本  1.9.4.4-bilingual.20
+// 双语版本  1.9.4.4-bilingual.21
 // ---------------------------------------------------------------
 // ==/UserScript==
 
@@ -321,7 +321,28 @@
         '.SelectMenu',
         '.SelectMenu-item',
         '[data-component="ActionList"]',
-        '[data-component="ActionList.Item"]'
+        '[data-component="ActionList.Item"]',
+        '[class*="prc-Button"]',
+        '[class*="prc-Link"]',
+        '[class*="prc-SelectPanel"]',
+        '[class*="Primer_Brand__Button"]',
+        '[class*="RefSelector"]',
+        '[class*="SectionFilterLink"]',
+        '[class*="Layout-module__Heading"]',
+        '[class*="Overlay-"]',
+        '[class*="Blankslate"]',
+        '[class*="PageHeader"]',
+        '[class*="TableTitle"]',
+        '[class*="Button--"]',
+        '[class*="Link--"]',
+        '.btn-sm',
+        '.tooltipped',
+        '.Link',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'label'
     ].join(', ');
 
     const BILINGUAL_EXCLUDE_SELECTOR = [
@@ -340,7 +361,11 @@
         'kbd',
         'textarea',
         'input',
-        '[contenteditable="true"]'
+        '[contenteditable="true"]',
+        '[class*="sr-only"]',
+        '[class*="VisuallyHidden"]',
+        '[class*="FormControl-label"]',
+        '[class*="prc-components-Label"]'
     ].join(', ');
 
     const BILINGUAL_INLINE_MAX_LENGTH = 30;
