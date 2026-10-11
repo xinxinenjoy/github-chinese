@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.21
+// @version      1.9.4.4-bilingual.22
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.21
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.22
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
 // @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ---------------------------------------------------------------
 // 上游基线  maboloshi/github-chinese 1.9.4.4-2026-09-27
-// 双语版本  1.9.4.4-bilingual.21
+// 双语版本  1.9.4.4-bilingual.22
 // ---------------------------------------------------------------
 // ==/UserScript==
 
@@ -1795,8 +1795,8 @@
         // 获取时间文本
         const text = element.textContent;
         if (!text) return;
-        // 移除开头的"on"
-        const result = text.replace(/^on/, "");
+        // 移除时间文本中的"on"
+        const result = text.replace(/\bon\s+/gi, (match, offset) => offset === 0 ? " " : "");
         if (result !== text) {
             element.textContent = result; // 应用翻译
         }
