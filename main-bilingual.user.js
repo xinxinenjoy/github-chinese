@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.27
+// @version      1.9.4.4-bilingual.28
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.27
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.28
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
@@ -27,8 +27,8 @@
 // @updateURL    https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ---------------------------------------------------------------
-// 上游基线  maboloshi/github-chinese 1.9.4.4-2026-10-14
-// 双语版本  1.9.4.4-bilingual.27
+// 上游基线  maboloshi/github-chinese 1.9.4.4-2026-11-08
+// 双语版本  1.9.4.4-bilingual.28
 // ---------------------------------------------------------------
 // ==/UserScript==
 
@@ -47,7 +47,11 @@
         },
         SPECIAL_SITES: ['gist', 'status', 'skills', 'education'], // 特殊站点类型
         DESC_SELECTORS: { // 简介元素的CSS选择器
-            repository: ".f4.tmp-my-3",
+            repository: [
+                ".f4.tmp-my-3", // 经典 UI
+                'p[class*="SidebarAbout-module_"][class*="_description"]', // 新版 React UI（issue #811）
+                '[class*="borderGrid__"] p[class*="description__"]', // 当前 React UI：About 侧栏内的描述
+            ].join(", "),
             gist: ".gist-content [itemprop='about']"
         },
         OBSERVER_CONFIG: { // MutationObserver配置
@@ -1095,6 +1099,7 @@
 
         // ----- 选择器定义 -----
         const dataContentLabelSelector = 'header.GlobalNav [data-component="text"][data-content]';
+        const breadcrumbLinkSelector = 'header.GlobalNav nav[data-component="Breadcrumbs"] a[data-component="Breadcrumbs.Item"][href]';
         // 需要监听的 React 渲染区域：头部和弹层
         const controlledSurfaceSelector = [
             'header.GlobalNav',
@@ -1242,6 +1247,26 @@
             }
         }
 
+        function isReactGlobalNavIdentifierLink(element) {
+            const link = element.closest?.(breadcrumbLinkSelector);
+            if (!link) return false;
+
+            const linkPath = link.pathname.toLowerCase();
+            const repository = document.head.querySelector('meta[name="octolytics-dimension-repository_nwo"]')?.content.toLowerCase();
+            if (repository) {
+                const [owner] = repository.split('/');
+                return linkPath === `/${owner}` || linkPath === `/${repository}`;
+            }
+
+            const [, firstSegment, secondSegment] = window.location.pathname.toLowerCase().split('/');
+            if (firstSegment === 'orgs' || firstSegment === 'organizations') {
+                return linkPath === `/${secondSegment}`;
+            }
+
+            const metaLocation = document.head.querySelector('meta[name="analytics-location"]')?.content || '';
+            return /^\/<(?:user-name|org-login)>(?:\/|$)/.test(metaLocation) && linkPath === `/${firstSegment}`;
+        }
+
         /**
          * 判断节点是否应该被跳过（不翻译）
          */
@@ -1251,7 +1276,7 @@
             if (element.closest?.(unsafeTextSelector)) return true;
             if (element.closest?.(searchSurfaceSelector)) return true;
 
-            return false;
+            return isReactGlobalNavIdentifierLink(element);
         }
 
         /**
@@ -1582,6 +1607,12 @@
                 // 处理DOM变化
                 if (State.pageConfig) {
                     processMutations(mutations);
+
+                    // GitHub 会用 React 动态替换仓库描述节点，旧按钮随节点一起丢失：重新挂载
+                    if (State.featureSet?.enable_transDesc) {
+                        const descSelector = CONFIG.DESC_SELECTORS[State.pageConfig.currentPageType];
+                        if (descSelector) transDesc(descSelector);
+                    }
                 }
             }, 'MutationObserver')
         );
