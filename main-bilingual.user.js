@@ -4,7 +4,7 @@
 // @description  GitHub 系统 UI 中英双语对照显示，基于 maboloshi/github-chinese 修改。
 // @copyright    2021, 沙漠之子 (https://maboloshi.github.io/Blog)
 // @icon         https://github.githubassets.com/pinned-octocat.svg
-// @version      1.9.4.4-bilingual.28
+// @version      1.9.4.4-bilingual.29
 // @author       沙漠之子, WanXin
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -12,7 +12,7 @@
 // @match        https://gist.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
-// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.28
+// @require      https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/locals.js?v=1.9.4.4-bilingual.29
 // @run-at       document-start
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
 // @downloadURL  https://raw.githubusercontent.com/xinxinenjoy/github-chinese/bilingual/main-bilingual.user.js
 // ---------------------------------------------------------------
 // 上游基线  maboloshi/github-chinese 1.9.4.4-2026-11-08
-// 双语版本  1.9.4.4-bilingual.28
+// 双语版本  1.9.4.4-bilingual.29
 // ---------------------------------------------------------------
 // ==/UserScript==
 
@@ -1955,7 +1955,9 @@
 
         // 修复：安全检查 classList.contains，避免 null sibling 时崩溃
         const nextSibling = element.nextElementSibling;
-        if (nextSibling?.classList?.contains('translate-button')) return;
+        // 已有按钮或翻译结果时不再插入，否则 MutationObserver 重挂载会让每次点击都叠加一个翻译框（#811 回归）
+        if (nextSibling?.classList?.contains('translate-button') ||
+            nextSibling?.classList?.contains('translation-result')) return;
 
         // 创建翻译按钮
         const button = document.createElement('div');
