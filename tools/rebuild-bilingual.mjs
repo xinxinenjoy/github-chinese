@@ -310,6 +310,18 @@ function runGitMergeFile(mode, currentFile, baseFile, upstreamFile) {
     );
 }
 
+/*
+ * git merge-file 的退出码语义是「冲突个数」，不是「有没有冲突」：
+ *   0        = 干净合并
+ *   1..127   = 冲突个数（超过 127 截断为 127）
+ *   其他/null = 进程起不来、被信号杀、Git 自身出错
+ *
+ * 早期这里只接受 0 和 1，等于「最多容忍 1 处冲突」。上游一次改动产生
+ * 2 处以上冲突就会直接判失败 —— 2026-11-12 起连续 6 次同步失败，
+ * 就是上游 1.9.4.6 重构后冲突数变成 6~7 触发的。
+ */
+const MERGE_CONFLICT_MAX = 127;
+
 function runMergeFile(currentBody, baseBody, upstreamBody) {
     const dir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'ghb-merge-')
@@ -331,17 +343,28 @@ function runMergeFile(currentBody, baseBody, upstreamBody) {
             upstreamFile
         );
 
-        if (clean.status === 0) {
+        if (clean.error) {
+            die(`git merge-file 启动失败：${clean.error.message}`);
+        }
+
+        const conflicts = clean.status;
+
+        if (
+            conflicts === null ||
+            conflicts < 0 ||
+            conflicts > MERGE_CONFLICT_MAX
+        ) {
+            die(
+                `git merge-file 执行失败：${clean.stderr || `退出码 ${conflicts}`}`
+            );
+        }
+
+        if (conflicts === 0) {
             return {
                 body: clean.stdout,
                 status: 'clean',
+                conflicts: 0,
             };
-        }
-
-        if (clean.status !== 1) {
-            die(
-                `git merge-file 执行失败：${clean.stderr || `退出码 ${clean.status}`}`
-            );
         }
 
         const ours = runGitMergeFile(
@@ -360,6 +383,7 @@ function runMergeFile(currentBody, baseBody, upstreamBody) {
         return {
             body: ours.stdout,
             status: 'fallback-ours',
+            conflicts,
         };
     } finally {
         fs.rmSync(
@@ -398,8 +422,17 @@ function assertStructure(text) {
         'BILINGUAL_UI_SELECTOR',
     ];
 
+    /*
+     * 上游结构标记：这里只放「上游必须保留的骨架」。
+     * 上游 1.9.4.6-2026-11-13 重构后删除了 setupReactGlobalNavTranslation
+     * （React 全局导航的词条已并入公共词库，改走普通文本节点翻译），
+     * 首次载入与 Turbo 换页统一收敛到 applyPage，标记随之换成新入口。
+     * 标记失效说明上游又动了骨架，兜底合并没有意义，必须人工过一遍。
+     */
     const upstreamMarkers = [
-        'function setupReactGlobalNavTranslation(',
+        'function applyPage(',
+        'function traversePage(',
+        'function watchReactCommits(',
         'function traverseNode(',
         'function transText(',
         'function setupMutationObserver(',
@@ -493,6 +526,7 @@ syntaxCheck(args.output);
 console.log(`COVERAGE_UI_SELECTORS=${coverageRules.uiSelectors.length}`);
 console.log(`COVERAGE_EXCLUDE_SELECTORS=${coverageRules.excludeSelectors.length}`);
 console.log(`BUILD_STATUS=${merged.status}`);
+console.log(`MERGE_CONFLICTS=${merged.conflicts}`);
 console.log(`UPSTREAM_VERSION=${metadata.upstreamVersion}`);
 console.log(`RELEASE_CORE_VERSION=${metadata.releaseCore}`);
 console.log(`VERSION_CORE_HELD=${metadata.heldCurrentCore}`);
@@ -502,4 +536,14 @@ if (merged.status === 'fallback-ours') {
     console.warn(
         'BUILD_WARNING=上游与双语修改发生重叠，已自动保留双语冲突区并吸收其他上游更新。'
     );
+
+    // 1 处冲突是常态（历史逻辑也只容忍 1 处）。
+    // 多于 1 处意味着上游改动面变大，兜底会把上游改动整块丢掉，
+    // 需要人工复核产物，不能只靠 warning 过去。
+    if (merged.conflicts > 1) {
+        console.warn(
+            `BUILD_WARNING=本次冲突 ${merged.conflicts} 处，超过常态的 1 处，` +
+            '请人工复核产物是否丢掉了上游的必要改动。'
+        );
+    }
 }
