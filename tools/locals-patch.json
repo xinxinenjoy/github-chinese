@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": [
+    "上游词库 locals.js 的本地补丁，唯一真相源。",
+    "locals.js 每次 workflow 都由 git show <上游>:locals.js 直接覆盖，手改必丢，",
+    "所以缺失 / 错译的词条一律写在这里，由 tools/locals-patch.mjs 在同步之后注入。",
+    "",
+    "staticMerge: 页面名 -> { 原文: 译文 }，用 Object.assign 合并（覆盖同名项，其余保留）。",
+    "regexpFix:   按 source 精确定位上游那条正则，换成 locals-patch.mjs 里注册的处理函数。"
+  ],
+  "staticMerge": {
+    "public": {
+      "Products": "产品",
+      "Developers": "开发者",
+      "Businesses": "企业"
+    },
+    "repository": {
+      "Wiki": "维基",
+      "Topics": "主题"
+    }
+  },
+  "regexpFix": [
+    {
+      "id": "licensesOther",
+      "page": "repository",
+      "source": "([^ ]+) and (\\d+) other licenses found",
+      "note": "上游 handler 的 licKey 只映射 Unknown，其余许可证名拼出 undefined"
+    }
+  ]
+}

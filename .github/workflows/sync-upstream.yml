@@ -329,6 +329,16 @@ jobs:
           git show "${NEW}:locals.js" \
             > locals.js
 
+      # 上游词库每次都被整份覆盖，本地补丁（tools/locals-patch.json）必须在这之后重新注入。
+      # 补丁失败不阻断发布：最坏情况是少几条本地词条，不应让整条同步流水线变红。
+      - name: Patch local dictionary
+        continue-on-error: true
+        run: |
+          node tools/locals-patch.mjs --file locals.js \
+            || echo "::warning::词库补丁注入失败，本次发布缺少本地补丁词条"
+          node --check locals.js \
+            || echo "::warning::词库补丁后语法校验失败"
+
       - name: Rebuild main-bilingual.user.js
         id: rebuild
         if: steps.detect.outputs.rebuild_needed == 'true'

@@ -31181,3 +31181,44 @@ defineI18nPage(I18N["zh-CN"], "repository/agents", () => ({
         ['.BannerDescription', '仅在付费计划中可用。试用 Copilot Pro，可免费 30 天。'],
     ],
 }));
+
+/* ==== bilingual 本地词库补丁（由 tools/locals-patch.mjs 注入，手工修改会被覆盖） ==== */
+(function () {
+    var zh = I18N['zh-CN'];
+    if (!zh) return;
+
+    function mergeStatic(page, dict) {
+        var target = zh[page];
+        if (!target || !target.static) return;
+        Object.keys(dict).forEach(function (key) { target.static[key] = dict[key]; });
+    }
+
+    mergeStatic("public", {
+        "Products": "产品",
+        "Developers": "开发者",
+        "Businesses": "企业"
+    });
+
+    mergeStatic("repository", {
+        "Wiki": "维基",
+        "Topics": "主题"
+    });
+
+    // regexpFix: licensesOther
+    (function () {
+        var page = zh["repository"];
+        if (!page || !page.regexp) return;
+        var source = "([^ ]+) and (\\d+) other licenses found";
+        var handler = function (all, lic, num) {
+                if (lic === 'License') return '许可证（另有' + num + '个）';
+                var named = { Unknown: '未知', Other: '其他' };
+                return (named[lic] || lic) + '和另外' + num + '个许可证';
+            };
+        for (var i = 0; i < page.regexp.length; i++) {
+            if (page.regexp[i][0].source === source) { page.regexp[i][1] = handler; return; }
+        }
+        // 上游换了写法：退回追加到队首，保证新规则先匹配
+        page.regexp.unshift([new RegExp(source), handler]);
+    })();
+})();
+/* ==== 本地词库补丁结束 ==== */
